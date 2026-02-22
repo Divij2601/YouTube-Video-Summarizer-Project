@@ -3,15 +3,31 @@ import os
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
-from langchaingroq import ChatGroq
+from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from youtube_transcript_api import YouTubeTranscriptApi
-from langchain_community.tools import YouTubeSearchResults
-
+from langchain_community.tools import YouTubeSearchTool
 load_dotenv()
 
 
+
 llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.8)
+
+class YtGraphState(BaseModel):
+    video_url: str = Field(..., description="The URL of the YouTube video to summarize")
+    video_id: Optional[str] = Field(default=None, description="The ID of the YouTube video to summarize")
+    summary: Optional[str] = Field(default=None, description="The summary of the YouTube video")
+    Transcript: Optional[str] = Field(default=None, description="The transcript of the YouTube video")
+    keywords: Optional[List[str]] = Field(default=None, description="The keywords of the YouTube video")
+    video_suggestions: Optional[List[str]] = Field(default=None, description="The suggestions of the YouTube video")
+    questions: Optional[str] = Field(default=None, description="The questions of the YouTube video")
+    next_steps: Optional[str] = Field(default=None, description="The next steps of the YouTube video")
+
+#This is the model that is used to extract the video ID from the YouTube video URL
+class ExtractVideoId(BaseModel):
+    video_id: str = Field(..., description="The ID of the YouTube video to summarize")
+
+
 
 
 def extract_video_id(state: YtGraphState):
@@ -92,20 +108,6 @@ def video_suggestions(state: YtGraphState):
 
 #State of the graph 
 # This is the state of the graph, it is a pydantic model that is used to store the state of the graph
-class YtGraphState(BaseModel):
-    video_url: str = Field(..., description="The URL of the YouTube video to summarize")
-    video_id: optional[str] = Field(default=None, description="The ID of the YouTube video to summarize")
-    summary: Optional[str] = Field(default=None, description="The summary of the YouTube video")
-    Transcript: Optional[str] = Field(default=None, description="The transcript of the YouTube video")
-    keywords: Optional[List[str]] = Field(default=None, description="The keywords of the YouTube video")
-    video_suggestions: Optional[List[str]] = Field(default=None, description="The suggestions of the YouTube video")
-    questions: Optional[str] = Field(default=None, description="The questions of the YouTube video")
-    next_steps: Optional[str] = Field(default=None, description="The next steps of the YouTube video")
-
-#This is the model that is used to extract the video ID from the YouTube video URL
-class ExtractVideoId(BaseModel):
-    video_id: str = Field(..., description="The ID of the YouTube video to summarize")
-
 
 builder = StateGraph(YtGraphState)
 
