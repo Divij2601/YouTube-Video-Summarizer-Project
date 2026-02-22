@@ -1,133 +1,333 @@
-from typing import List, Dict, Optional
-import os
+"""
+Production-ready YouTube Summarization Graph
+-------------------------------------------
+Features:
+- Strict Pydantic validation
+- Structured LLM outputs
+- Defensive error handling
+- Modern LangChain Core API
+- Production-safe LangGraph design
+"""
+
+# ==============================
+# Imports
+# ==============================
+
+from typing import Optional, List
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
-from langgraph.graph import StateGraph, START, END
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate
-from youtube_transcript_api import YouTubeTranscriptApi
+from langchain_core.prompts import PromptTemplate
+from langgraph.graph import StateGraph, START, END
 from langchain_community.tools import YouTubeSearchTool
-load_dotenv()
+from youtube_transcript_api import YouTubeTranscriptApi
+import re
 
+# ==============================
+# Load Environment Variables
+# ==============================
 
+load_dotenv(override=True)
 
-llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.8)
+# ==============================
+# Initialize LLM
+# ==============================
 
-class YtGraphState(BaseModel):
-    video_url: str = Field(..., description="The URL of the YouTube video to summarize")
-    video_id: Optional[str] = Field(default=None, description="The ID of the YouTube video to summarize")
-    summary: Optional[str] = Field(default=None, description="The summary of the YouTube video")
-    Transcript: Optional[str] = Field(default=None, description="The transcript of the YouTube video")
-    keywords: Optional[List[str]] = Field(default=None, description="The keywords of the YouTube video")
-    video_suggestions: Optional[List[str]] = Field(default=None, description="The suggestions of the YouTube video")
-    questions: Optional[str] = Field(default=None, description="The questions of the YouTube video")
-    next_steps: Optional[str] = Field(default=None, description="The next steps of the YouTube video")
+llm = ChatGroq(
+    model="gpt-4o-mini",
+    temperature=0.3  # Lower temperature for deterministic production output
+)
 
-#This is the model that is used to extract the video ID from the YouTube video URL
-class ExtractVideoId(BaseModel):
-    video_id: str = Field(..., description="The ID of the YouTube video to summarize")
+# ==============================
+# Graph State Schema
+# Strictly validated
+# ==============================
 
+class GraphState(BaseModel):
+    """
+    State object passed between LangGraph nodes.
+    All fields are strictly typed for production reliability.
+    """
 
+    video_url: HttpUrl = Field(..., description="Valid YouTube video URL")
 
-
-def extract_video_id(state: YtGraphState):
-    video_url = state.video_url
-    template =PromptTemplate(
-        template='''
-        You are a helpful assistant that extracts the video ID from the YouTube video URL.
-        The video URL is {video_url}.''',
-        input_variables=['video_url'] 
+    video_id: Optional[str] = Field(
+        default=None,
+        min_length=5,
+        description="Extracted YouTube video ID"
     )
-    llm_with_structured_output = llm.with_structured_output(ExtractVideoId)
-    chain = template | llm_with_structured_output
-    result = chain.invoke({"video_url": video_url})
+
+    transcript: Optional[str] = Field(
+        default=None,
+        min_length=10,
+        description="Full transcript text"
+    )
+
+    summary: Optional[str] = Field(
+        default=None,
+        min_length=10,
+        description="Concise transcript summary"
+    )
+
+    keywords: Optional[List[str]] = Field(
+        default=None,
+        description="List of extracted keywords"
+    )
+
+    video_suggestions: Optional[List[str]] = Field(
+        default=None,
+        description="Suggested related videos"
+    )
+
+    questions: Optional[List[str]] = Field(
+        default=None,
+        description="Generated follow-up questions"
+    )
+
+    next_steps: Optional[List[str]] = Field(
+        default=None,
+        description="Suggested learning next steps"
+    )
+
+    # Ensure keywords are not empty strings
+    @field_validator("keywords")
+    def validate_keywords(cls, v):
+        if v:
+            for word in v:
+                if not word.strip():
+                    raise ValueError("Keywords cannot contain empty strings.")
+        return v
+
+
+# ==============================
+# Structured Output Schemas
+# ==============================
+
+class ExtractedVideoID(BaseModel):
+    video_id: str = Field(min_length=5)
+
+
+class SummaryOutput(BaseModel):
+    summary: str
+
+
+class KeywordOutput(BaseModel):
+    keywords: List[str]
+
+
+class QuestionsOutput(BaseModel):
+    questions: List[str]
+
+
+class NextStepsOutput(BaseModel):
+    next_steps: List[str]
+
+
+# ==============================
+# Node 1: Extract Video ID
+# ==============================
+
+def extract_video_id(state: GraphState):
+    """
+    Extract YouTube video ID using structured LLM output.
+    """
+
+    template = PromptTemplate.from_template(
+        """
+        Extract the video ID from this YouTube URL:
+        {video_url}
+
+        Return ONLY the video ID.
+        """
+    )
+
+    structured_llm = llm.with_structured_output(ExtractedVideoID)
+
+    chain = template | structured_llm
+
+    result = chain.invoke({"video_url": state.video_url})
+
     return {"video_id": result.video_id}
 
-def extract_transcript(state: YtGraphState):
-    video_id = state.video_id
-    ytt_api = YouTubeTranscriptApi()
-    fetched_transcript = ytt_api.fetch(video_id)
-    transcript_text = " "
-    for snippet in fetched_transcript:
-        transcript_text += snippet.text + " "
-        return {"transcript": transcript_text}
 
-def summarize_transcript(state: YtGraphState):
-    transcript = state.transcript
-    template = PromptTemplate(
-        template=''' summarize the following transcript: {transcript} in a concise manner.
-        ''',
-        input_variables=['transcript']
+# ==============================
+# Node 2: Fetch Transcript
+# ==============================
+
+def extract_transcript(state: GraphState):
+    """
+    Fetch transcript using YouTubeTranscriptApi.
+    Raises error if transcript not available.
+    """
+
+    try:
+        transcript_list = YouTubeTranscriptApi().fetch(state.video_id)
+    except Exception as e:
+        raise RuntimeError(f"Transcript fetch failed: {str(e)}")
+
+    transcript_text = " ".join([snippet.text for snippet in transcript_list])
+
+    if not transcript_text.strip():
+        raise ValueError("Transcript is empty.")
+
+    return {"transcript": transcript_text}
+
+
+# ==============================
+# Node 3: Summarize Transcript
+# ==============================
+
+def summarize_transcript(state: GraphState):
+    """
+    Generate structured summary from transcript.
+    """
+
+    template = PromptTemplate.from_template(
+        """
+        Summarize the following transcript concisely.
+
+        Transcript:
+        {transcript}
+        """
     )
-    chain = template | llm
-    result = chain.invoke({"transcript": transcript})
-    return {"summary": result.content}
 
-def generate_questions(state: YtGraphState):
-    summary = state.summary
-    template = PromptTemplate(
-        template=''' generate 5 questions based on the following summary: {summary}
-        ''',
-        input_variables=['summary']
+    structured_llm = llm.with_structured_output(SummaryOutput)
+
+    chain = template | structured_llm
+
+    result = chain.invoke({"transcript": state.transcript})
+
+    return {"summary": result.summary}
+
+
+# ==============================
+# Node 4: Extract Keywords
+# ==============================
+
+def find_keywords(state: GraphState):
+    """
+    Extract structured keyword list.
+    """
+
+    template = PromptTemplate.from_template(
+        """
+        Extract 3-5 important keywords from this transcript.
+        Return them as a Python list of strings.
+
+        Transcript:
+        {transcript}
+        """
     )
-    chain = template | llm
-    result = chain.invoke({"summary": summary})
-    return {"questions": result.content}
 
-def next_steps(state: YtGraphState):
-    summary = state.summary
-    template = PromptTemplate(
-        template=''' generate 5 next steps based on the following summary: {summary}
-        ''',
-        input_variables=['summary']
+    structured_llm = llm.with_structured_output(KeywordOutput)
+
+    chain = template | structured_llm
+
+    result = chain.invoke({"transcript": state.transcript})
+
+    return {"keywords": result.keywords}
+
+
+# ==============================
+# Node 5: Generate Questions
+# ==============================
+
+def generate_questions(state: GraphState):
+    """
+    Generate structured follow-up questions.
+    """
+
+    template = PromptTemplate.from_template(
+        """
+        Generate 5 thoughtful questions based on this summary.
+
+        Summary:
+        {summary}
+        """
     )
-    chain = template | llm
-    result = chain.invoke({"summary": summary})
-    return {"next_steps": result.content}
 
-def find_keywords(state: YtGraphState):
-    transcript = state.transcript
-    template = PromptTemplate(
-        template=''' extract the keywords from the following transcript: {transcript}
-        keywords should be a single word or phrase that is relevant to the transcript.
-        return only the keywords, no other text.
-        ''',
-        input_variables=['transcript']
+    structured_llm = llm.with_structured_output(QuestionsOutput)
+
+    chain = template | structured_llm
+
+    result = chain.invoke({"summary": state.summary})
+
+    return {"questions": result.questions}
+
+
+# ==============================
+# Node 6: Generate Next Steps
+# ==============================
+
+def generate_next_steps(state: GraphState):
+    """
+    Generate structured next steps.
+    """
+
+    template = PromptTemplate.from_template(
+        """
+        Suggest 5 practical next learning steps based on this summary.
+
+        Summary:
+        {summary}
+        """
     )
-    chain = template | llm
-    result = chain.invoke({"transcript": transcript})
-    return {"keywords": result.content}
 
-def video_suggestions(state: YtGraphState):
-    keywords = state.keywords
-    tool = YouTubeSearchResults(max_results=5)
-    video_suggestions = tool.invoke(keywords)
-    return {"video_suggestions": video_suggestions}
+    structured_llm = llm.with_structured_output(NextStepsOutput)
 
+    chain = template | structured_llm
+
+    result = chain.invoke({"summary": state.summary})
+
+    return {"next_steps": result.next_steps}
 
 
-#State of the graph 
-# This is the state of the graph, it is a pydantic model that is used to store the state of the graph
+# ==============================
+# Node 7: YouTube Suggestions
+# ==============================
 
-builder = StateGraph(YtGraphState)
+def video_suggestions(state: GraphState):
+    """
+    Use YouTubeSearchTool safely.
+    """
+
+    tool = YouTubeSearchTool()
+
+    query = " ".join(state.keywords)
+
+    try:
+        results = tool.invoke(query)
+    except Exception as e:
+        raise RuntimeError(f"YouTube search failed: {str(e)}")
+
+    return {"video_suggestions": results}
+
+
+# ==============================
+# Build LangGraph
+# ==============================
+
+builder = StateGraph(GraphState)
 
 builder.add_node("extract_video_id", extract_video_id)
 builder.add_node("extract_transcript", extract_transcript)
 builder.add_node("summarize_transcript", summarize_transcript)
-builder.add_node("generate_questions", generate_questions)
-builder.add_node("next_steps", next_steps)
 builder.add_node("find_keywords", find_keywords)
+builder.add_node("generate_questions", generate_questions)
+builder.add_node("generate_next_steps", generate_next_steps)
 builder.add_node("video_suggestions", video_suggestions)
 
+# Flow definition
 builder.add_edge(START, "extract_video_id")
 builder.add_edge("extract_video_id", "extract_transcript")
 builder.add_edge("extract_transcript", "summarize_transcript")
 builder.add_edge("extract_transcript", "find_keywords")
 builder.add_edge("summarize_transcript", "generate_questions")
-builder.add_edge("summarize_transcript", "next_steps")
+builder.add_edge("summarize_transcript", "generate_next_steps")
 builder.add_edge("find_keywords", "video_suggestions")
-builder.add_edge("video_suggestions", END)
+
 builder.add_edge("generate_questions", END)
-builder.add_edge("next_steps", END)
+builder.add_edge("generate_next_steps", END)
+builder.add_edge("video_suggestions", END)
 
 graph = builder.compile()
