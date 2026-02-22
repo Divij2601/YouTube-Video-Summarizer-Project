@@ -1,1 +1,1 @@
-medical AI chatbot using langchain, RAG, Gemini and Flask
+building Youtube Video summarizer with the help of LangChain, LangGraph, FastAPI, Docker
