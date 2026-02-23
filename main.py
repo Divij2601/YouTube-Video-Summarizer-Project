@@ -7,6 +7,7 @@ from langchain_core.prompts import PromptTemplate
 from langgraph.graph import StateGraph, START, END
 from langchain_community.tools import YouTubeSearchTool
 from youtube_transcript_api import YouTubeTranscriptApi
+import json
 import re
 
 load_dotenv()
@@ -191,20 +192,43 @@ def generate_questions(state: GraphState):
 
     template = PromptTemplate.from_template(
         """
-        Generate 5 thoughtful questions based on this summary.
+        You are an educational assistant.
+        Based on the summary below, generate 5 thoughtful, concise questions
+        that help someone reflect on and better understand the content.
+
+        Return the questions as a JSON array of strings, for example:
+        ["Question 1", "Question 2", "Question 3", "Question 4", "Question 5"]
 
         Summary:
         {summary}
         """
     )
 
-    structured_llm = llm.with_structured_output(QuestionsOutput)
+    chain = template | llm
 
-    chain = template | structured_llm
+    response = chain.invoke({"summary": state.summary})
 
-    result = chain.invoke({"summary": state.summary})
+    # LangChain ChatGroq returns an AIMessage; extract text content
+    text = getattr(response, "content", response)
 
-    return {"questions": result.questions}
+    questions: List[str] = []
+
+    # Try to parse strict JSON first
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict) and "questions" in data and isinstance(data["questions"], list):
+            questions = [str(q).strip() for q in data["questions"] if str(q).strip()]
+        elif isinstance(data, list):
+            questions = [str(q).strip() for q in data if str(q).strip()]
+    except Exception:
+        # Fallback: split by lines and clean bullet/number prefixes
+        lines = [line.strip() for line in str(text).splitlines() if line.strip()]
+        questions = [
+            re.sub(r"^\s*[-*\d\.\)]\s*", "", line)
+            for line in lines
+        ]
+
+    return {"questions": questions}
 
 
 
