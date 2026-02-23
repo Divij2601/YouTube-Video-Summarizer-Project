@@ -9,13 +9,13 @@ from langchain_community.tools import YouTubeSearchTool
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
 
-load_dotenv(override=True)
+load_dotenv()
 
 
 
 llm = ChatGroq(
-    model= "llama-3.1-8b-instant"
-    temperature=0.3  # Lower temperature for deterministic production output
+    model="llama-3.1-8b-instant", 
+    temperature=0.3, 
 )
 
 class GraphState(BaseModel):
