@@ -1,17 +1,3 @@
-"""
-Production-ready YouTube Summarization Graph
--------------------------------------------
-Features:
-- Strict Pydantic validation
-- Structured LLM outputs
-- Defensive error handling
-- Modern LangChain Core API
-- Production-safe LangGraph design
-"""
-
-# ==============================
-# Imports
-# ==============================
 
 from typing import Optional, List
 from dotenv import load_dotenv
@@ -23,25 +9,14 @@ from langchain_community.tools import YouTubeSearchTool
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
 
-# ==============================
-# Load Environment Variables
-# ==============================
-
 load_dotenv(override=True)
 
-# ==============================
-# Initialize LLM
-# ==============================
+
 
 llm = ChatGroq(
-    model="gpt-4o-mini",
+    model= "llama-3.1-8b-instant"
     temperature=0.3  # Lower temperature for deterministic production output
 )
-
-# ==============================
-# Graph State Schema
-# Strictly validated
-# ==============================
 
 class GraphState(BaseModel):
     """
@@ -99,21 +74,14 @@ class GraphState(BaseModel):
         return v
 
 
-# ==============================
-# Structured Output Schemas
-# ==============================
-
 class ExtractedVideoID(BaseModel):
-    video_id: str = Field(min_length=5)
-
+    video_id: str 
 
 class SummaryOutput(BaseModel):
     summary: str
 
-
 class KeywordOutput(BaseModel):
     keywords: List[str]
-
 
 class QuestionsOutput(BaseModel):
     questions: List[str]
@@ -123,9 +91,6 @@ class NextStepsOutput(BaseModel):
     next_steps: List[str]
 
 
-# ==============================
-# Node 1: Extract Video ID
-# ==============================
 
 def extract_video_id(state: GraphState):
     """
@@ -150,9 +115,7 @@ def extract_video_id(state: GraphState):
     return {"video_id": result.video_id}
 
 
-# ==============================
-# Node 2: Fetch Transcript
-# ==============================
+
 
 def extract_transcript(state: GraphState):
     """
@@ -172,10 +135,6 @@ def extract_transcript(state: GraphState):
 
     return {"transcript": transcript_text}
 
-
-# ==============================
-# Node 3: Summarize Transcript
-# ==============================
 
 def summarize_transcript(state: GraphState):
     """
@@ -200,9 +159,6 @@ def summarize_transcript(state: GraphState):
     return {"summary": result.summary}
 
 
-# ==============================
-# Node 4: Extract Keywords
-# ==============================
 
 def find_keywords(state: GraphState):
     """
@@ -228,10 +184,6 @@ def find_keywords(state: GraphState):
     return {"keywords": result.keywords}
 
 
-# ==============================
-# Node 5: Generate Questions
-# ==============================
-
 def generate_questions(state: GraphState):
     """
     Generate structured follow-up questions.
@@ -255,9 +207,6 @@ def generate_questions(state: GraphState):
     return {"questions": result.questions}
 
 
-# ==============================
-# Node 6: Generate Next Steps
-# ==============================
 
 def generate_next_steps(state: GraphState):
     """
@@ -282,9 +231,6 @@ def generate_next_steps(state: GraphState):
     return {"next_steps": result.next_steps}
 
 
-# ==============================
-# Node 7: YouTube Suggestions
-# ==============================
 
 def video_suggestions(state: GraphState):
     """
@@ -303,9 +249,6 @@ def video_suggestions(state: GraphState):
     return {"video_suggestions": results}
 
 
-# ==============================
-# Build LangGraph
-# ==============================
 
 builder = StateGraph(GraphState)
 
